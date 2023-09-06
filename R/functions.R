@@ -4,7 +4,6 @@
 # orthog: Toggle to return orthogonal sketching matrix
 
 get_sketch_mat <- function(m, p, orthog = FALSE){
-  # browser()
     Mat <- matrix(rnorm(m*p), nrow = m, ncol = p)
     if(isTRUE(orthog)){
     Mat <- t(qr.Q(qr(t(Mat))))
@@ -13,9 +12,21 @@ get_sketch_mat <- function(m, p, orthog = FALSE){
 }
 
 # Calculate exponential kernel
-exp_kernel <- function(Mat, lam){
-  eps <- sqrt(.Machine$double.eps)
-  Dists <- plgp::distance(Mat)
-  Kern <- exp(-lam * sqrt(Dists)) + diag(eps, nrow(Mat))
+exp_kernel <- function(M1, M2 = NULL, lam){
+  if(is.null(M2)){
+    eps <- sqrt(.Machine$double.eps)
+    Dists <- plgp::distance(M1)
+    Kern <- exp(-lam * sqrt(Dists)) + diag(eps, nrow(M1))
   return(Kern)
+  }
+  else{
+    if (ncol(M1) != ncol(M2)){
+      stop("col dim mismatch for M1 & M2. Please ensure data have same dimension")
+    }
+    Dists <- plgp::distance(M1, M2)
+    Kern <- exp(-lam * sqrt(Dists))
+    return(Kern)
+  }
 }
+
+# Fitting the GP?
