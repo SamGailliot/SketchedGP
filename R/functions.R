@@ -32,14 +32,11 @@ exp_kernel <- function(M1, M2 = NULL, lam){
 # Helper function for get_lambda
 # Get the pieces for the ratio of the different lambda_i posteriors
 get_log_fs <- function(lambdas, Psi.XX, y){
-  # As <- numeric(length = length(lambdas))
   log.fs <- numeric(length = length(lambdas))
   n <- nrow(Psi.XX)
   for(ii in 1:length(log.fs)){
     K1 <- squared_exp_kernel(Psi.XX, lambdas[ii])
     G <- K1 + diag(1, n, n)
-    # As[ii] <- sqrt(det(G)) * colSums(y * (solve(G) %*% y))^(n/2)
-
     log.fs[ii] <- -0.5 * log(det(G)) - n/2 * log(colSums(y * (solve(G) %*% y))) + log(dgamma(lambdas[ii], 1, 1))
   }
   return(log.fs)
@@ -47,9 +44,6 @@ get_log_fs <- function(lambdas, Psi.XX, y){
 
 # Helper function for get_lambda
 get_ws <- function(log.fs){
-  # TODO: Resolve: Should this be min or max.....
-  # Theoretically the same. Just needs to be multiplied by ratio of constants C
-  # To avoid computational issues I think that max makes more sense.
   ws <- exp(log.fs - max(log.fs))
   Ws <- ws / sum(ws)
   return(Ws)
@@ -57,8 +51,6 @@ get_ws <- function(log.fs){
 
 # Given a compression matrix \Psi construct lambda
 get_lambda <- function(y, Psi.XX, dmin, dmax, k = 100, a = 1, b = 1){
-  # dmin = 0.1; dmax = 3; k = 10; a = 1; b = 2
-  # browser()
   lambdas <- runif(k, min = 3/dmax, max = 3/dmin)
 
   # For each lambda we obtain f(lambda_i | y, Psi)
@@ -88,3 +80,24 @@ get_lambda <- function(y, Psi.XX, dmin, dmax, k = 100, a = 1, b = 1){
 # }
 
 # What happens next?
+
+get_swiss_roll <- function(n, p, tau){
+  x.mat <- matrix(data = NA, nrow = n, ncol = p)
+  y.vec <- numeric(length = n)
+  for(ii in 1:n){
+    d <- rnorm(p, 0, sd = tau)
+    t <- runif(1, (3*pi)/2, (9*pi)/2)
+    h <- runif(1, 0, 3)
+
+    # Sample Noise s
+    #d <- rnorm(p, 0, sd = 0.05)
+
+    x <- numeric(length = length(d))
+    x[1] <- t * cos(t); x[2] <- h; x[3] <- t * sin(t)
+    x.mat[ii, ] <- x + d
+
+    y.vec[ii] <- sin(5 * pi * t) + h^2 + rnorm(1, 0, 0.02)
+  }
+  out <- list("X" = x.mat, "y" = y.vec)
+  return(out)
+}
