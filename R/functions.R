@@ -31,7 +31,7 @@ exp_kernel <- function(M1, M2 = NULL, lam){
 
 # Helper function for get_lambda
 # Get the pieces for the ratio of the different lambda_i posteriors
-get_log_fs <- function(lambdas, Psi.XX, y){
+get_log_fs <- function(lambdas, sketched_X, y){
   log.fs <- numeric(length = length(lambdas))
   n <- nrow(Psi.XX)
   for(ii in 1:length(log.fs)){
@@ -50,11 +50,11 @@ get_ws <- function(log.fs){
 }
 
 # Given a compression matrix \Psi construct lambda
-get_lambda <- function(y, Psi.XX, dmin, dmax, k = 100, a = 1, b = 1){
+get_lambda <- function(y, sketched_X, dmin, dmax, k = 100, a = 1, b = 1){
   lambdas <- runif(k, min = 3/dmax, max = 3/dmin)
 
   # For each lambda we obtain f(lambda_i | y, Psi)
-  log.fs <- get_log_fs(lambdas = lambdas, Psi.XX = Psi.XX, y = y)
+  log.fs <- get_log_fs(lambdas = lambdas, sketched_X = sketched_X, y = y)
   ws <- get_ws(log.fs)
 
   lambda <- sample(lambdas, size = 1, prob = ws)
@@ -63,21 +63,28 @@ get_lambda <- function(y, Psi.XX, dmin, dmax, k = 100, a = 1, b = 1){
 
 
 # Given y, X, m & K return the matrix of loo densities
-# get_probs <- function(y, X, m, K){
-#   # Initialize constants and storage
-#   n <- nrow(X); p <- ncol(X)
-#   Psis <- vector("list", length = K)
-#   lambdas <- numeric(length = K)
-#   snrs <- numeric(length = K)
-#   Pmat <- matrix(0, nrow = n, ncol = K)
-#
-#   for(ii in 1:K){
-#     Psi <- get_sketch_mat(m, p)
-#     sketched_X <- t(Psi %*% t(X))
-#
-#
-#   }
-# }
+get_probs <- function(y, X, m, K){
+  # Initialize constants and storage
+  n <- nrow(X); p <- ncol(X)
+
+  Psis <- vector("list", length = K)
+  lambdas <- numeric(length = K)
+  snrs <- numeric(length = K)
+
+  dist.mat <- plgp::distance(X)
+  dmax <- max(dist.mat)
+  dmin <- min( dist.mat[dist.mat != 0] )
+  # maxs <- numeric(length = K)
+  # mins <- numeric(length = K)
+  Pmat <- matrix(0, nrow = n, ncol = K)
+
+  for(ii in 1:K){
+    Psi <- get_sketch_mat(m, p)
+    sketched_X <- t(Psi %*% t(X))
+
+
+  }
+}
 
 # What happens next?
 

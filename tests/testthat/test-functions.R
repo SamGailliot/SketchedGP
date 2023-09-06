@@ -15,3 +15,8 @@ test_that("Correct kernel dimensions", {
   expect_equal(c(nrow(K2), ncol(K2)), c(n1, n2))
   expect_equal(c(nrow(K3), ncol(K3)), c(n2, n2))
 })
+
+test_that("Playing around with get lambdas", {
+n = 100; p = 100; m = 60; K = 5
+
+})
