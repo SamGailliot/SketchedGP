@@ -10,6 +10,8 @@ test_that("Correct kernel dimensions", {
   M2 <- get_sketch_mat(n2, p)
   K1 <- exp_kernel(M1, lam = 1)
   K2 <- exp_kernel(M1, M2, lam = 1)
+  K3 <- exp_kernel(M2, lam = 1)
   expect_equal(c(nrow(K1), ncol(K1)), c(n1, n1))
   expect_equal(c(nrow(K2), ncol(K2)), c(n1, n2))
+  expect_equal(c(nrow(K3), ncol(K3)), c(n2, n2))
 })
