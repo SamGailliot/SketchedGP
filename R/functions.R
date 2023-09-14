@@ -37,7 +37,8 @@ get_log_fs <- function(lambdas, sketched_X, y){
   for(ii in 1:length(log.fs)){
     K1 <- squared_exp_kernel(Psi.XX, lambdas[ii])
     G <- K1 + diag(1, n, n)
-    log.fs[ii] <- -0.5 * log(det(G)) - n/2 * log(colSums(y * (solve(G) %*% y))) + log(dgamma(lambdas[ii], 1, 1))
+    # log.fs[ii] <- -0.5 * log(det(G)) - n/2 * log(colSums(y * (solve(G) %*% y))) + log(dgamma(lambdas[ii], 1, 1))
+    log.fs[ii] <- -0.5 * log(det(G)) - n/2 * log(colSums(y * (solve(G) %*% y))) # multiply by uniform prior over lambda
   }
   return(log.fs)
 }
