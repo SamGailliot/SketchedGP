@@ -24,6 +24,39 @@ get_swiss_roll <- function(n, p, tau){
   return(out)
 }
 
+get_NIS_scores <- function(X, y, dn = NULL, DOPAR = TRUE){
+
+  if(isTRUE(DOPAR)){
+    n_cores <- detectCores()
+    registerDoParallel(cores = n_cores)
+    n <- nrow(X)
+    p <- ncol(X)
+    if(is.null(dn)){dn <- floor(n^(1/5) + 2)}
+    SSPs <- numeric(p)
+
+    SSPs <- foreach(jj = 1:p, .combine = c) %dopar% {
+      spline.mat <- bs(X[,jj], degree = dn)
+      fit.lm.bs <- lm(y ~ spline.mat)
+
+      (1/n) * sum(fit.lm.bs$fitted.values^2)
+    }
+    return(SSPs)
+  }else{
+    n <- nrow(X)
+    p <- ncol(X)
+    if(is.null(dn)){dn <- floor(n^(1/5) + 2)}
+    SSPs <- numeric(p)
+
+    for(jj in 1:p){
+      spline.mat <- bs(X[,jj], degree = dn)
+      fit.lm.bs <- lm(y ~ spline.mat)
+      SSPs[jj] <- (1/n) * sum(fit.lm.bs$fitted.values^2)
+    }
+
+    return(SSPs)
+  }
+}
+
 get_sketch_mat <- function(m, p, orthog = FALSE){
     Mat <- matrix(rnorm(m*p), nrow = m, ncol = p)
     if(isTRUE(orthog)){
