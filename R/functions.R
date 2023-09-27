@@ -152,9 +152,10 @@ get_model_densities <- function(y, sketched.X, theta, SNR){
     # non-loo response
     y.loo <- as.matrix(y[-ii], nrow = (n-1), ncol = 1)
 
-    G <- SNR*C.loo + diag( rep(1, (n-1)) )
+    # G <- SNR*C.loo + diag( rep(1, (n-1)) )
+    #G.inv <- chol2inv(chol(G))
 
-    G.inv <- chol2inv(chol(G))
+    G.inv <- chol2inv(chol(SNR*C.loo + diag( rep(1, (n-1)) )))
 
     mu.pred = SNR*as.numeric(t(C.pred) %*% G.inv %*% y.loo)
     b1 <-  (t(y.loo) %*% G.inv %*% y.loo) / 2
@@ -225,48 +226,67 @@ get_densities <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
   return(list("Density.Mat" = Density.Mat, "Thetas" = Thetas, "P.list" = P.list))
 }
 
-# Given y, X, m & K return the matrix of loo densities
-get_densities_parallel <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
-  # Initialize constants and storage
-  # browser()
-  n <- nrow(X); p <- ncol(X); N.snrs <- length(SNRs)
 
-  P.list <- vector("list", length = K)
-  thetas <- matrix(0, nrow = K, ncol = N.snrs) # K by N.snrs matrix which holds all length scales
+# Stacking Weights -- cite this
+stacking_weights <-function(lpd_point,
+                            optim_method = "BFGS",
+                            optim_control = list()) {
 
-  dist.mat <- plgp::distance(X)
-  dmax <- max(dist.mat)
-  dmin <- min( dist.mat[dist.mat != 0] )
-  # maxs <- numeric(length = K)
-  # mins <- numeric(length = K)
-  Density.Mat <- matrix(0, nrow = n, ncol = K*N.snrs)
-
-  # Construct K Ps
-  for(ii in 1:K){
-    P.list[[ii]] <- get_sketch_mat(m, p, orthog = FALSE)
+  stopifnot(is.matrix(lpd_point))
+  N <- nrow(lpd_point)
+  K <- ncol(lpd_point)
+  if (K < 2) {
+    stop("At least two models are required for stacking weights.")
   }
 
-  density.mat.col <- 1
-  for(ii in 1:K){
-    sketched.X <- t(P.list[[ii]] %*% t(X))
-
-    # Now for each member of the snrs list we
-    for(jj in 1:length(SNRs)){
-      # For each SNR, P pair we sample an appropriate theta
-      thetas[ii, jj] <- get_theta(y, sketched.X = sketched.X, dmin = dmin, dmax = dmax, N = N.thetas, SNR = SNRs[jj])
-
-      # Fill in one column of the Density Mat each time
-      C <- exp_kernel(sketched.X, theta = thetas[ii, jj])
-
-      # Calculate
-      Density.Mat[, density.mat.col] <- get_model_densities(y, sketched.X, theta = thetas[ii, jj], SNRs[jj])
-
-      density.mat.col <- density.mat.col + 1
+  exp_lpd_point <- exp(lpd_point)
+  negative_log_score_loo <- function(w) {
+    # objective function: log score
+    stopifnot(length(w) == K - 1)
+    w_full <- c(w, 1 - sum(w))
+    sum <- 0
+    for (i in 1:N) {
+      sum <- sum + log(exp(lpd_point[i, ]) %*% w_full)
     }
+    return(-as.numeric(sum))
   }
 
+  gradient <- function(w) {
+    # gradient of the objective function
+    stopifnot(length(w) == K - 1)
+    w_full <- c(w, 1 - sum(w))
+    grad <- rep(0, K - 1)
+    for (k in 1:(K - 1)) {
+      for (i in 1:N) {
+        grad[k] <- grad[k] +
+          (exp_lpd_point[i, k] - exp_lpd_point[i, K]) / (exp_lpd_point[i,]  %*% w_full)
+      }
+    }
+    return(-grad)
+  }
 
-  return(Density.Mat)
+  ui <- rbind(rep(-1, K - 1), diag(K - 1))  # K-1 simplex constraint matrix
+  ci <- c(-1, rep(0, K - 1))
+  w <- constrOptim(
+    theta = rep(1 / K, K - 1),
+    f = negative_log_score_loo,
+    grad = gradient,
+    ui = ui,
+    ci = ci,
+    method = optim_method,
+    control = optim_control
+  )$par
+
+  wts <- structure(
+    c(w, 1 - sum(w)),
+    names = paste0("model", 1:K),
+    class = c("stacking_weights")
+  )
+
+  return(wts)
 }
+
+
+
 
 # What happens next?
