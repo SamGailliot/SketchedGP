@@ -284,7 +284,7 @@ get_densities <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
   return(list("Density.Mat" = Density.Mat, "Thetas" = Thetas, "P.list" = P.list))
 }
 
-sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta){
+sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, prediction = FALSE){
   n <- nrow(X); p <- ncol(X)
   n.snr <- length(SNRs)
   n.models <- K*n.snr
@@ -352,7 +352,11 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta){
     Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
   }
 
+  # Solve for the stacking weights
   stack.weights <- stacking_weights(lpd_point = log(Densities.Mat))
+
+  # # Make predictions on y.star given X.star
+  # if(isTRUE(predictions))
   return(list("Densities.Mat" = Densities.Mat, "Preds.mat"= Preds.Mat, "stack.weights" = stack.weights, "Models" = models.mat))
 }
 
