@@ -3,6 +3,16 @@
 # p: Original Dimension of X
 # orthog: Toggle to return orthogonal sketching matrix
 
+get_torus <- function(n, p, tau){
+  P = p - 3 # Leftover dimensions to fill with noise
+  tor <- geozoo::torus(p = 3, n = n, radius = c(2,1)) # Generate torus
+  X <- tor$points + matrix(rnorm(n*3,0, tau), n, 3)
+  X <- cbind(X, matrix(rnorm(P*n, 0, tau), n, P))
+  y <- scale(X[,2]^2 - sin(5*pi*X[,3])) + rnorm(n, 0, 0.1)
+  out <- list("X" = X, "y" = y)
+  return(out)
+}
+
 get_swiss_roll <- function(n, p, tau){
   x.mat <- matrix(data = NA, nrow = n, ncol = p)
   y.vec <- numeric(length = n)
@@ -70,8 +80,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
   # browser()
   if(is.null(M2)){
     eps <- sqrt(.Machine$double.eps)
-    #Dists <- sqrt(plgp::distance(M1))
-    Dists <- plgp::distance(M1)
+    Dists <- sqrt(plgp::distance(M1))
+    #Dists <- plgp::distance(M1)
     Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
     #Kern <- exp(sqrt(Dists)/theta) + diag(eps, nrow(M1))
     #Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
@@ -81,8 +91,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
     if (ncol(M1) != ncol(M2)){
       stop("col dim mismatch for M1 & M2. Please ensure data have same dimension")
     }
-    #Dists <- sqrt(plgp::distance(M1, M2))
-    Dists <- plgp::distance(M1, M2)
+    Dists <- sqrt(plgp::distance(M1, M2))
+    #Dists <- plgp::distance(M1, M2)
     Kern <- exp(-theta * Dists)
     #Kern <- exp(sqrt(Dists)/theta)
     #Kern <- exp(-theta * Dists)
@@ -120,7 +130,7 @@ get_theta <- function(y, sketched.X, dmin, dmax, N, SNR){
     Gchol <- chol(G)
     Ginv <- chol2inv(chol(G))
     #logdetG <- det(G, log = TRUE)
-    logdetG <- 2*sum(log(diag(Gchol)))
+    logdetG <- 2*sum(log(diag(Gchol))) # Compare with SVDs
     # log.fs[ii] <- -0.5 * logdetG - n/2 * log(colSums(y * (Ginv %*% y))) # multiply by uniform prior over thetas
 
     #det(chol(G), log = TRUE) - n/2 * log(colSums(y * (Ginv %*% y))) # multiply by uniform prior over thetas
@@ -134,7 +144,7 @@ get_theta <- function(y, sketched.X, dmin, dmax, N, SNR){
 
   # Sample theta according to weights
   theta <- sample(thetas, size = 1, prob = Ws)
-
+  # theta <- thetas[which.max(Ws)]
   # return(list("thetas" = thetas, "ws" = log.fs, "theta" = theta))
   return(theta)
 }
@@ -229,6 +239,10 @@ get_model_preds <- function(y, sketched.X, theta, SNR){
   return(p.out)
 }
 
+# get_model_preds_matrix <- function(X, Xstar, y, models.mat, Sketch.Mat.List){
+#
+# }
+
 
 # Given y, X, m & K return the matrix of loo densities
 get_densities <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
@@ -284,6 +298,64 @@ get_densities <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
   return(list("Density.Mat" = Density.Mat, "Thetas" = Thetas, "P.list" = P.list))
 }
 
+get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack.weights, Mins, Maxs, sketch.mat.num){
+  # browser()
+  if(is.null(dim(Xstar))){Xstar <- matrix(Xstar, nrow = 1)}
+
+  weights.inds <- which(stack.weights != 0)
+  K = length(thetas)
+  n = nrow(X)
+  nstar = nrow(Xstar)
+  I <- diag(1, nrow = n, ncol = n)
+  Istar <- diag(1, nrow = nstar, ncol = nstar)
+  y <- as.matrix(y, nrow = length(y), ncol = 1)
+
+  # SIGS <- vector("list", length(w.inds))
+  sigs <- matrix(data = 0, nrow = length(weights.inds), ncol = nstar)
+  mus <- matrix(data = 0, nrow = length(weights.inds), ncol = nstar)
+
+  #jj = 1
+  out.loop <- foreach(ii = weights.inds) %dopar% {
+  #for(ii in weights.inds){
+    Sketched.X <- t(Sketch.Mat.List[[sketch.mat.num[ii]]] %*% t(X))
+    Sketched.Xstar <- t(Sketch.Mat.List[[sketch.mat.num[ii]]] %*% t(Xstar))
+    m = ncol(Sketched.X)
+    # How do I restandardize...
+    mins <- apply(Sketched.X, 2, min)
+    maxs <- apply(Sketched.X, 2, max)
+    Sketched.X <- ( Sketched.X - matrix(mins, nrow = n, ncol = m, byrow = TRUE) ) / (matrix(maxs, nrow = n, ncol = m, byrow = TRUE) - matrix(mins, nrow = n, ncol = m, byrow = TRUE))
+    # Sketched.X <- ( Sketched.X - matrix( Mins[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) ) / ( matrix( Maxs[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) - matrix( Mins[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) )
+    #Psi.XXstar <- ( Psi.XXstar - matrix( Mins[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) ) / ( matrix( Maxs[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) - matrix( Mins[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) )
+    Sketched.Xstar <- ( Sketched.Xstar - matrix( apply(Sketched.Xstar, 2, min) , nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) ) / ( matrix( apply(Sketched.Xstar, 2, max), nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) - matrix( apply(Sketched.Xstar, 2, min) , nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) )
+    K1 <- exp_kernel(Sketched.X, theta = thetas[ii])
+    # K.1.pred <- exp(-lams[ii] *cdist(Psi.XX, Psi.XXstar)); K.pred.1 <- t(K.1.pred)
+    # K.1.pred <- exp(-lams[ii] *cdist(X, Xstar)); K.pred.1 <- t(K.1.pred)
+    K.1.pred <- exp_kernel(Sketched.X, Sketched.Xstar, theta = thetas[ii]); K.pred.1 <- t(K.1.pred)
+    # K.pred <- squared_exp_kernel(Psi.XXstar, lambda = lams[ii])
+    K.pred <- exp_kernel(Sketched.Xstar, theta = thetas[ii])
+    # K.pred <- exp_kernel(Xstar, theta = thetas[ii])
+
+    SNR = SNRs[ii]
+    G <- SNR*K1 + I
+    G.chol <- chol(G)
+    G.inv <- chol2inv(G.chol)
+
+    mu.pred = as.numeric(SNR*K.pred.1 %*% G.inv %*% y)
+    b1 <-  (t(y) %*% G.inv %*% y) / 2
+    SIG.pred <- diag(as.numeric((2*b1/n)) * (Istar + SNR*K.pred - (SNR^2)*K.pred.1 %*% G.inv %*% K.1.pred))
+
+    # mus[jj,] <- mu.pred
+    # sigs[[jj,]] <- SIG.pred
+    # jj = jj + 1
+    list("mus" = mu.pred, "SIGS" = SIG.pred)
+  }
+  for(jj in 1:length(weights.inds)){
+    mus[jj, ] <- out.loop[[jj]]$mus
+    sigs[jj,] <- out.loop[[jj]]$SIGS
+  }
+  return(list("mus" = mus, "sigs" = sigs))
+}
+
 sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, prediction = FALSE){
   n <- nrow(X); p <- ncol(X)
   n.snr <- length(SNRs)
@@ -310,6 +382,7 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
   mins.mat <- matrix(0, nrow = K, ncol = m)
   maxs.mat <- matrix(0, nrow = K, ncol = m)
 
+  print("Sampling thetas")
   for(ii in 1:K){
   sketched.X <- X%*%t(Sketch.Mat.List[[ii]])
   #Psi.XX.l <- t(Psil %*% t(X))
@@ -321,23 +394,26 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
   mins.mat[ii, ] <- mins
   maxs.mat[ii, ] <- maxs
   Sketched.X.List[[ii]] <- sketched.X
-
     for(jj in 1:n.snr){
       # For each sketched.X, snr pair sample an appropriate theta
       ind <- (ii - 1)*n.snr + jj
       print(ind)
       snr = models.mat[2, ind]
       models.mat[3, ind] <- get_theta(y = y, sketched.X = Sketched.X.List[[ii]], dmin = dmin, dmax = dmax, N = n.theta, SNR = snr)
+
+      # Test how changing the theta parameter changes the results
+      # models.mat[3, ind] <- 0.1
     }
   }
 
   # Now we have all of the model parameters.
   # So we can get the model densities in parallel.
   # browser()
-
+  print("Getting stacking densities")
   out.mat <- matrix(data = NA, nrow = 2*n, ncol = n.models)
   Densities.Mat <- matrix(data = NA, nrow = n, ncol = n.models)
   Preds.Mat <- matrix(data = NA, nrow = n, ncol = n.models)
+
   for(ii in 1:n.models){
     # browser()
     print(ii)
@@ -352,12 +428,39 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
     Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
   }
 
+  print("Solving stacking problem")
   # Solve for the stacking weights
   stack.weights <- stacking_weights(lpd_point = log(Densities.Mat))
 
-  # # Make predictions on y.star given X.star
-  # if(isTRUE(predictions))
-  return(list("Densities.Mat" = Densities.Mat, "Preds.mat"= Preds.Mat, "stack.weights" = stack.weights, "Models" = models.mat))
+  print("Fitting on X")
+  fit.out <- get_preds_parallel(Xstar = X, X = X,
+                                y = y,
+                                Sketch.Mat.List = Sketch.Mat.List,
+                                thetas = models.mat[3, ],
+                                SNR = models.mat[2, ],
+                                stack.weights = stack.weights,
+                                Mins = mins.mat, Maxs= maxs.mat,
+                                sketch.mat.num = models.mat[1, ])
+  fit.mus <- fit.out$mus
+  fit.sigs <- fit.out$sigs
+
+  if(isTRUE(prediction)){
+    print("Predicting on X*")
+    preds.out <- get_preds_parallel(Xstar = X.star, X = X,
+                       y = y,
+                       Sketch.Mat.List = Sketch.Mat.List,
+                       thetas = models.mat[3, ],
+                       SNR = models.mat[2, ],
+                       stack.weights = stack.weights,
+                       Mins = mins.mat, Maxs= maxs.mat,
+                       sketch.mat.num = models.mat[1, ])
+    preds.mus <- preds.out$mus
+    preds.sigs <- preds.out$sigs
+    return(list("Densities.Mat" = Densities.Mat, "loo.Preds.mat"= Preds.Mat, "stack.weights" = stack.weights, "Models" = models.mat, "mu.pred" = preds.mus, "sig.pred" = preds.sigs, "mu.fit" = fit.mus, "sig.fit" = fit.sigs))
+  }
+
+
+  return(list("Densities.Mat" = Densities.Mat, "loo.Preds.mat"= Preds.Mat, "stack.weights" = stack.weights, "Models" = models.mat, "mu.fit" = fit.mus, "sig.fit" = fit.sigs))
 }
 
 # Stacking Weights -- cite this
