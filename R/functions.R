@@ -68,6 +68,7 @@ get_NIS_scores <- function(X, y, dn = NULL, DOPAR = TRUE){
 }
 
 get_sketch_mat <- function(m, p, orthog = FALSE){
+    orthog = TRUE
     Mat <- matrix(rnorm(m*p, 0, 1), nrow = m, ncol = p)
     if(isTRUE(orthog)){
     Mat <- t(qr.Q(qr(t(Mat))))
@@ -124,8 +125,10 @@ get_theta <- function(y, sketched.X, dmin, dmax, N, SNR){
   #   #log.fs[ii] <- det(chol(G), log = TRUE) - n/2 * log(colSums(y * (Ginv %*% y))) # multiply by uniform prior over thetas
   # }
 
+  # D_k <- sqrt(plgp::distance(sketched.X))
   log.fs <- foreach(ii = 1:N, .combine = c) %dopar%{
     C <- exp_kernel(sketched.X, theta = thetas[ii])
+    # C <- exp(-thetas[ii]*D_k) + diag(sqrt(.Machine$double.eps), n)
     G <- (SNR*C) + Identity_Mat + diag(sqrt(.Machine$double.eps), nrow(C))
     Gchol <- chol(G)
     Ginv <- chol2inv(chol(G))
@@ -299,10 +302,11 @@ get_densities <- function(y, X, m, K, SNRs = c(0.1, 0.5, 1, 2), N.thetas = 50){
 }
 
 get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack.weights, Mins, Maxs, sketch.mat.num){
-  # browser()
+  #browser()
   if(is.null(dim(Xstar))){Xstar <- matrix(Xstar, nrow = 1)}
 
   weights.inds <- which(stack.weights != 0)
+  eps <- sqrt(.Machine$double.eps)
   K = length(thetas)
   n = nrow(X)
   nstar = nrow(Xstar)
@@ -310,12 +314,11 @@ get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack
   Istar <- diag(1, nrow = nstar, ncol = nstar)
   y <- as.matrix(y, nrow = length(y), ncol = 1)
 
-  # SIGS <- vector("list", length(w.inds))
   sigs <- matrix(data = 0, nrow = length(weights.inds), ncol = nstar)
   mus <- matrix(data = 0, nrow = length(weights.inds), ncol = nstar)
 
   #jj = 1
-  out.loop <- foreach(ii = weights.inds) %dopar% {
+  out.loop <- foreach(ii = weights.inds, .combine = c) %dopar% {
   #for(ii in weights.inds){
     Sketched.X <- t(Sketch.Mat.List[[sketch.mat.num[ii]]] %*% t(X))
     Sketched.Xstar <- t(Sketch.Mat.List[[sketch.mat.num[ii]]] %*% t(Xstar))
@@ -324,8 +327,11 @@ get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack
     mins <- apply(Sketched.X, 2, min)
     maxs <- apply(Sketched.X, 2, max)
     Sketched.X <- ( Sketched.X - matrix(mins, nrow = n, ncol = m, byrow = TRUE) ) / (matrix(maxs, nrow = n, ncol = m, byrow = TRUE) - matrix(mins, nrow = n, ncol = m, byrow = TRUE))
-    # Sketched.X <- ( Sketched.X - matrix( Mins[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) ) / ( matrix( Maxs[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) - matrix( Mins[[ii]] , nrow = nrow(Sketched.X), ncol = ncol(Sketched.X), byrow = TRUE ) )
-    #Psi.XXstar <- ( Psi.XXstar - matrix( Mins[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) ) / ( matrix( Maxs[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) - matrix( Mins[[ii]] , nrow = nrow(Psi.XXstar), ncol = ncol(Psi.XXstar), byrow = TRUE ) )
+
+    # TESTING THIS OUT
+    # Sketched.Xstar <- (Sketched.Xstar - matrix(mins, nrow = nstar, ncol = m, byrow = TRUE)) / (matrix(maxs, nrow = nstar, ncol = m, byrow = TRUE) - matrix(mins, nrow = nstar, ncol = m, byrow = TRUE))
+
+    # WORKS WITH THE LINE BELOW
     Sketched.Xstar <- ( Sketched.Xstar - matrix( apply(Sketched.Xstar, 2, min) , nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) ) / ( matrix( apply(Sketched.Xstar, 2, max), nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) - matrix( apply(Sketched.Xstar, 2, min) , nrow = nrow(Sketched.Xstar), ncol = ncol(Sketched.Xstar), byrow = TRUE ) )
     K1 <- exp_kernel(Sketched.X, theta = thetas[ii])
     # K.1.pred <- exp(-lams[ii] *cdist(Psi.XX, Psi.XXstar)); K.pred.1 <- t(K.1.pred)
@@ -350,16 +356,33 @@ get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack
     list("mus" = mu.pred, "SIGS" = SIG.pred)
   }
   for(jj in 1:length(weights.inds)){
-    mus[jj, ] <- out.loop[[jj]]$mus
-    sigs[jj,] <- out.loop[[jj]]$SIGS
+    ind1 <- 2*(jj-1) + 1
+    ind2 <- 2*jj
+    #mus[jj, ] <- out.loop[[jj]]$mus
+    #sigs[jj,] <- out.loop[[jj]]$SIGS
+    mus[jj, ] <- out.loop[[ind1]]
+    sigs[jj, ] <- out.loop[[ind2]]
   }
   return(list("mus" = mus, "sigs" = sigs))
 }
 
-sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, prediction = FALSE){
+sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
+                        SNRs = NULL, n.theta = 10, n.snrs = 10,prediction = FALSE,
+                        snr.method = "set",
+                        snr.max = 100){
+  if(snr.method == "sample"){SNRs = NULL}
   n <- nrow(X); p <- ncol(X)
-  n.snr <- length(SNRs)
-  n.models <- K*n.snr
+
+  # Depending on which snr.method get number of snrs per theta and number of models
+  if(snr.method == "sample"){
+    n.snr <- 1
+    n.models <- K
+  }
+  if(snr.method == "set"){
+    n.snr <- length(SNRs)
+    n.models <- K*n.snr
+  }
+
   n_cores <- detectCores()
   registerDoParallel(cores = 8)
 
@@ -369,11 +392,6 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
     Sketch.Mat.List[[ii]] <- get_sketch_mat(m, p, orthog = FALSE)
   }
 
-  # I want some kind of matrix that tells me where to look for things, or their values
-  models.mat <- matrix(0, nrow = 3, ncol = n.models)
-  models.mat[1, ] <- rep(1:K, each = n.snr)
-  models.mat[2, ] <- rep(SNRs, K)
-
   dist.mat = plgp::distance(X)
   dmax <- max(dist.mat)
   dmin <- min( dist.mat[dist.mat != 0] )
@@ -382,29 +400,110 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
   mins.mat <- matrix(0, nrow = K, ncol = m)
   maxs.mat <- matrix(0, nrow = K, ncol = m)
 
-  print("Sampling thetas")
-  for(ii in 1:K){
-  sketched.X <- X%*%t(Sketch.Mat.List[[ii]])
-  #Psi.XX.l <- t(Psil %*% t(X))
-  mins <- apply(sketched.X, 2, min)
-  maxs <- apply(sketched.X, 2, max)
-  sketched.X <- ( sketched.X - matrix(mins, nrow = n, ncol = m, byrow = TRUE) ) / (matrix(maxs, nrow = n, ncol = m, byrow = TRUE) - matrix(mins, nrow = n, ncol = m, byrow = TRUE))
+  if(snr.method == "set"){
+    # I want some kind of matrix that tells me where to look for things, or their values
+    models.mat <- matrix(0, nrow = 3, ncol = n.models)
+    models.mat[1, ] <- rep(1:K, each = n.snr)
+    models.mat[2, ] <- rep(SNRs, K)
 
-  # Normalize the sketched X's to the unit cube before fitting GP
-  mins.mat[ii, ] <- mins
-  maxs.mat[ii, ] <- maxs
-  Sketched.X.List[[ii]] <- sketched.X
-    for(jj in 1:n.snr){
-      # For each sketched.X, snr pair sample an appropriate theta
-      ind <- (ii - 1)*n.snr + jj
-      print(ind)
-      snr = models.mat[2, ind]
-      models.mat[3, ind] <- get_theta(y = y, sketched.X = Sketched.X.List[[ii]], dmin = dmin, dmax = dmax, N = n.theta, SNR = snr)
+    print("Sampling thetas")
+    for(ii in 1:K){
+    # Get the K sketched Xs, normalize and save them
+    sketched.X <- X%*%t(Sketch.Mat.List[[ii]])
+    mins <- apply(sketched.X, 2, min)
+    maxs <- apply(sketched.X, 2, max)
+    sketched.X <- ( sketched.X - matrix(mins, nrow = n, ncol = m, byrow = TRUE) ) / (matrix(maxs, nrow = n, ncol = m, byrow = TRUE) - matrix(mins, nrow = n, ncol = m, byrow = TRUE))
 
-      # Test how changing the theta parameter changes the results
-      # models.mat[3, ind] <- 0.1
+    # Normalize the sketched X's to the unit cube before fitting GP
+    mins.mat[ii, ] <- mins
+    maxs.mat[ii, ] <- maxs
+    Sketched.X.List[[ii]] <- sketched.X
+      for(jj in 1:n.snr){
+        # For each sketched.X, snr pair sample an appropriate theta
+        ind <- (ii - 1)*n.snr + jj
+        print(ind)
+        snr = models.mat[2, ind]
+        models.mat[3, ind] <- get_theta(y = y, sketched.X = Sketched.X.List[[ii]], dmin = dmin, dmax = dmax, N = n.theta, SNR = snr)
+
+        # Test how changing the theta parameter changes the results
+        # models.mat[3, ind] <- 0.1
+      }
     }
   }
+
+  if(snr.method == 'sample'){
+    eps <- .Machine$double.eps
+    models.mat <- matrix(0, nrow = 3, ncol = n.models)
+    models.mat[1, ] <- rep(1:K, each = n.snr)
+    #models.mat[2, ] <- rep(SNRs, K)
+
+    # Get the K sketched Xs, normalize and save them
+    for(ii in 1:K){
+    sketched.X <- X%*%t(Sketch.Mat.List[[ii]])
+    mins <- apply(sketched.X, 2, min)
+    maxs <- apply(sketched.X, 2, max)
+    sketched.X <- ( sketched.X - matrix(mins, nrow = n, ncol = m, byrow = TRUE) ) / (matrix(maxs, nrow = n, ncol = m, byrow = TRUE) - matrix(mins, nrow = n, ncol = m, byrow = TRUE))
+
+    # Normalize the sketched X's to the unit cube before fitting GP
+    mins.mat[ii, ] <- mins
+    maxs.mat[ii, ] <- maxs
+    Sketched.X.List[[ii]] <- sketched.X
+    }
+
+
+    # A paired method for sampling thetas and snr vals
+    #thetas <- runif(n.theta, 3/dmax, 3/dmin)
+    thetas <- seq(3/dmax, 3/dmin, length.out = n.theta)
+    # log scale?
+    snrs <- c(0.1, 0.5, exp(seq(log(1), log(snr.max), length.out = (n.snrs-2)) ))
+    # or not?
+    # snrs <- c(0.1, 0.5, seq(1, snr.max, length.out = (n.snrs-2)) )
+    logdets <- numeric(length(snrs))
+    quadratic.exp <- numeric(length(snrs))
+    objective <- matrix(NA, length(thetas), length(snrs))
+    logdets.out <- matrix(NA, length(thetas), length(snrs))
+    quad.out <- matrix(NA, length(thetas), length(snrs))
+    Identity_Mat <- diag(rep(1, n))
+
+    print("Getting model parameters")
+    #models.mat[2:3, ] <- foreach(kk = 1:K, .combine = cbind) %dopar%{
+    for(kk in 1:K){
+      print(paste0("Choosing model parameters for model ", kk))
+      D_k <- sqrt(plgp::distance(Sketched.X.List[[kk]]))
+      # thetas <- runif(n.theta, 3/dmax, 3/dmin)
+      for(ii in 1:length(thetas)){
+        print(ii)
+        log.out <- foreach(jj = 1:length(snrs), .combine = c)%dopar%{
+          print(jj)
+          C <- exp(-thetas[ii]*D_k)  + diag(eps, nrow(D_k))
+          G <- (snrs[jj]*C) + Identity_Mat + diag(sqrt(eps), nrow(C))
+          Gchol <- chol(G)
+          Ginv <- chol2inv(chol(G))
+          logdets[jj] <- 2*sum(log(diag(Gchol)))
+          quadratic.exp[jj] <- log(colSums(y * (Ginv %*% y)))
+          logdets[jj] + (n)*quadratic.exp[jj]
+        }
+        objective[ii, ] <- log.out
+        logdets.out[ii, ] <- logdets
+        quad.out[ii, ]  <- quadratic.exp
+      }
+
+      # Find the snr, theta pair which minimize the objective
+      #browser()
+      min.inds <- which(objective == min(objective), arr.ind = TRUE)
+      if(nrow(min.inds)>1){
+        # pick the smallest SNR????
+        min.inds <- min.inds[1, ]
+      }
+
+      theta.kk <- thetas[min.inds[1]]
+      snr.kk <- snrs[min.inds[2]]
+      matrix(c(snr.kk, theta.kk), nrow = 2, ncol = 1)
+      models.mat[2, kk] <- snr.kk
+      models.mat[3, kk] <- theta.kk
+    }
+
+    }
 
   # Now we have all of the model parameters.
   # So we can get the model densities in parallel.
@@ -428,10 +527,13 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
     Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
   }
 
+  # Solve Stacking Problem
   print("Solving stacking problem")
   # Solve for the stacking weights
   stack.weights <- stacking_weights(lpd_point = log(Densities.Mat))
 
+  # Prediction on X
+  #browser()
   print("Fitting on X")
   fit.out <- get_preds_parallel(Xstar = X, X = X,
                                 y = y,
@@ -444,6 +546,7 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K, SNRs, n.theta, predicti
   fit.mus <- fit.out$mus
   fit.sigs <- fit.out$sigs
 
+  # Prediction on Xstar
   if(isTRUE(prediction)){
     print("Predicting on X*")
     preds.out <- get_preds_parallel(Xstar = X.star, X = X,
