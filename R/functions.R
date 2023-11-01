@@ -68,8 +68,9 @@ get_NIS_scores <- function(X, y, dn = NULL, DOPAR = TRUE){
 }
 
 get_sketch_mat <- function(m, p, orthog = FALSE){
-    orthog = TRUE
-    Mat <- matrix(rnorm(m*p, 0, 1), nrow = m, ncol = p)
+    #orthog = TRUE
+    Mat <- matrix(rnorm(m*p, 0, 1/m), nrow = m, ncol = p)
+    #Mat <- matrix(rnorm(m*p, 0, 1), nrow = m, ncol = p)
     if(isTRUE(orthog)){
     Mat <- t(qr.Q(qr(t(Mat))))
   }
@@ -81,8 +82,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
   # browser()
   if(is.null(M2)){
     eps <- sqrt(.Machine$double.eps)
-    Dists <- sqrt(plgp::distance(M1))
-    #Dists <- plgp::distance(M1)
+    #Dists <- sqrt(plgp::distance(M1))
+    Dists <- plgp::distance(M1)
     Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
     #Kern <- exp(sqrt(Dists)/theta) + diag(eps, nrow(M1))
     #Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
@@ -92,8 +93,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
     if (ncol(M1) != ncol(M2)){
       stop("col dim mismatch for M1 & M2. Please ensure data have same dimension")
     }
-    Dists <- sqrt(plgp::distance(M1, M2))
-    #Dists <- plgp::distance(M1, M2)
+    #Dists <- sqrt(plgp::distance(M1, M2))
+    Dists <- plgp::distance(M1, M2)
     Kern <- exp(-theta * Dists)
     #Kern <- exp(sqrt(Dists)/theta)
     #Kern <- exp(-theta * Dists)
@@ -197,6 +198,68 @@ get_model_densities <- function(y, sketched.X, theta, SNR){
   #return(list("dens" = p.out, "mu" = mu.out))
   return(p.out)
 }
+
+# Fill in the ii'th column of the loo densities matrix
+get_model_densities_K_fold <- function(y, sketched.X, theta, SNR, fold.labels, n.folds){
+  #browser()
+
+  # WHAT DO ALL THE n's need to be here...
+  n <- nrow(sketched.X)
+  n.old <- (n-1)
+  p.out <- numeric(length = n)
+  mu.out <- numeric(length = n)
+
+  # Get the exponential kernel | theta
+  C <- exp_kernel(sketched.X, theta = theta)
+
+  # for i = 1:n get the loo density
+  # for(ii in 1:n.folds){
+  p.out <- foreach(ii = 1:n.folds, .combine = rbind) %dopar%{
+    inds.k <- (which(fold.labels == ii))
+    fold.size <- length(inds.k)
+
+    I.k <- diag(rep(1, fold.size))
+    I.out <- diag(rep(1, n-fold.size))
+    # inds.out <- which(fold.labels != ii)
+    # Covariance between non loo locs
+    X.k <- sketched.X[inds.k, ]
+    X.out <- sketched.X[-inds.k, ]
+
+    C.k <- C[inds.k, inds.k]
+    C.out <- C[-inds.k, -inds.k]
+
+    # Covariance between loo and non-loo locs
+    C.pred <- C[-inds.k, inds.k]
+
+    # non-loo response
+    y.loo <- as.matrix(y[-ii], nrow = (n-1), ncol = 1)
+    y.out <- as.matrix(y[-inds.k], nrow = (n - fold.size), ncol = 1)
+    y.pred <- as.matrix(y[inds.k], nrow = fold.size, ncol = 1)
+
+    # G <- SNR*C.loo + diag( rep(1, (n-1)) )
+    #G.inv <- chol2inv(chol(G))
+
+    G.inv <- chol2inv(chol(SNR*C.out + I.out))
+
+    mu.pred = SNR*as.numeric(t(C.pred) %*% G.inv %*% y.out)
+    b1 <-  (t(y.out) %*% G.inv %*% y.out) / 2
+
+    sigsq.pred <- as.numeric((2*b1/n)) * ( I.k + SNR*C.k - (SNR^2)*(t(C.pred) %*% G.inv %*% C.pred))
+
+    T.pred <- numeric(fold.size)
+    for(tt in 1:fold.size){
+      t.score <- (y.pred[tt] - mu.pred[tt])/sqrt(sigsq.pred[tt, tt])
+      T.pred[tt] <- dt(t.score, fold.size)
+    }
+
+    # dt(T.pred, n)
+    #mu.pred
+    cbind(T.pred, mu.pred)
+  }
+  #return(list("dens" = p.out, "mu" = mu.out))
+  return(p.out)
+}
+
 
 # Fill in the ii'th column of the loo densities matrix
 get_model_preds <- function(y, sketched.X, theta, SNR){
@@ -369,6 +432,7 @@ get_preds_parallel <- function(Xstar, X, y, Sketch.Mat.List, thetas, SNRs, stack
 sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
                         SNRs = NULL, n.theta = 10, n.snrs = 10,prediction = FALSE,
                         snr.method = "set",
+                        stacking.method = "LOO", n.folds = 10,
                         snr.max = 100){
   if(snr.method == "sample"){SNRs = NULL}
   n <- nrow(X); p <- ncol(X)
@@ -419,6 +483,11 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
     maxs.mat[ii, ] <- maxs
     Sketched.X.List[[ii]] <- sketched.X
       for(jj in 1:n.snr){
+        # # ADDED DURING MEETING
+        # dist.mat = plgp::distance(Sketched.X.List[[ii]])
+        # dmax <- max(dist.mat)
+        # dmin <- min( dist.mat[dist.mat != 0] )
+        # ###
         # For each sketched.X, snr pair sample an appropriate theta
         ind <- (ii - 1)*n.snr + jj
         print(ind)
@@ -452,10 +521,11 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
 
 
     # A paired method for sampling thetas and snr vals
-    #thetas <- runif(n.theta, 3/dmax, 3/dmin)
+    # thetas <- runif(n.theta, 3/dmax, 3/dmin)
     thetas <- seq(3/dmax, 3/dmin, length.out = n.theta)
     # log scale?
-    snrs <- c(0.1, 0.5, exp(seq(log(1), log(snr.max), length.out = (n.snrs-2)) ))
+    #snrs <- c(0.01 ,0.1, 0.5, exp(seq(1, log(snr.max), length.out = (n.snrs-2)) ))
+    snrs <- c(0.1, 0.5 ,exp(seq(1, log(snr.max), length.out = (n.snrs)) ))
     # or not?
     # snrs <- c(0.1, 0.5, seq(1, snr.max, length.out = (n.snrs-2)) )
     logdets <- numeric(length(snrs))
@@ -470,9 +540,9 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
     for(kk in 1:K){
       print(paste0("Choosing model parameters for model ", kk))
       D_k <- sqrt(plgp::distance(Sketched.X.List[[kk]]))
-      # thetas <- runif(n.theta, 3/dmax, 3/dmin)
+      #thetas <- runif(n.theta, 3/dmax, 3/dmin)
       for(ii in 1:length(thetas)){
-        print(ii)
+        #print(ii)
         log.out <- foreach(jj = 1:length(snrs), .combine = c)%dopar%{
           print(jj)
           C <- exp(-thetas[ii]*D_k)  + diag(eps, nrow(D_k))
@@ -513,18 +583,50 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
   Densities.Mat <- matrix(data = NA, nrow = n, ncol = n.models)
   Preds.Mat <- matrix(data = NA, nrow = n, ncol = n.models)
 
-  for(ii in 1:n.models){
+  if(stacking.method == "kfold"){
     # browser()
-    print(ii)
-    n.mat = models.mat[1, ii]
-    snr = models.mat[2, ii]
-    theta = models.mat[3, ii]
+    # Create Fold Labels
+    fold.labels <- cut(sample(1:n, replace = FALSE, size = n), breaks = n.folds, labels = FALSE)
 
-    #sketched.X <- X%*%t(Sketch.Mat.List[[n.mat]])
-    sketched.X <- Sketched.X.List[[n.mat]]
-    out.mat[,ii] <- get_model_densities(y, sketched.X, theta, snr)
-    Densities.Mat[,ii] <- out.mat[seq(from = 1, to = 2*n, by = 2), ii]
-    Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
+    for(ii in 1:n.models){
+      n.mat = models.mat[1, ii]
+      snr = models.mat[2, ii]
+      theta = models.mat[3, ii]
+
+      sketched.X <- Sketched.X.List[[n.mat]]
+      #out.mat[,ii] <- get_model_densities_K_fold(y, sketched.X, theta, snr, fold.labels, n.folds)
+      out <- get_model_densities_K_fold(y, sketched.X, theta, snr, fold.labels, n.folds)
+
+      # Now we need to figure out how to put it all back together
+      # lets split out the Densities and Predictions
+      loc <- 1
+      for(kkk in 1:n.folds){
+        inds.folds <- which(fold.labels == kkk)
+        fold.size <- length(inds.folds)
+        Densities.Mat[inds.folds, ii] <- out[(loc:(fold.size + loc - 1)), 1]
+        Preds.Mat[inds.folds, ii] <- out[(loc:(fold.size + loc - 1)), 1]
+        loc <- loc + fold.size
+      }
+      # Densities.Mat[,ii] <- out.mat[seq(from = 1, to = 2*n, by = 2), ii]
+      # Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
+    }
+
+  }
+
+  if(stacking.method == "LOO"){
+    for(ii in 1:n.models){
+      # browser()
+      # print(ii)
+      n.mat = models.mat[1, ii]
+      snr = models.mat[2, ii]
+      theta = models.mat[3, ii]
+
+      #sketched.X <- X%*%t(Sketch.Mat.List[[n.mat]])
+      sketched.X <- Sketched.X.List[[n.mat]]
+      out.mat[,ii] <- get_model_densities(y, sketched.X, theta, snr)
+      Densities.Mat[,ii] <- out.mat[seq(from = 1, to = 2*n, by = 2), ii]
+      Preds.Mat[,ii] <- out.mat[seq(from = 2, to = 2*n, by = 2), ii]
+  }
   }
 
   # Solve Stacking Problem
