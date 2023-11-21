@@ -69,7 +69,9 @@ get_NIS_scores <- function(X, y, dn = NULL, DOPAR = TRUE){
 
 get_sketch_mat <- function(m, p, orthog = FALSE){
     #orthog = TRUE
+    # Good results with this one...
     Mat <- matrix(rnorm(m*p, 0, 1/m), nrow = m, ncol = p)
+    #Mat <- matrix(rnorm(m*p, 0, 1), nrow = m, ncol = p)
     #Mat <- matrix(rnorm(m*p, 0, 1), nrow = m, ncol = p)
     if(isTRUE(orthog)){
     Mat <- t(qr.Q(qr(t(Mat))))
@@ -82,8 +84,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
   # browser()
   if(is.null(M2)){
     eps <- sqrt(.Machine$double.eps)
-    #Dists <- sqrt(plgp::distance(M1))
-    Dists <- plgp::distance(M1)
+    Dists <- sqrt(plgp::distance(M1))
+    #Dists <- plgp::distance(M1)
     Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
     #Kern <- exp(sqrt(Dists)/theta) + diag(eps, nrow(M1))
     #Kern <- exp(-theta * Dists) + diag(eps, nrow(M1))
@@ -93,8 +95,8 @@ exp_kernel <- function(M1, M2 = NULL, theta){
     if (ncol(M1) != ncol(M2)){
       stop("col dim mismatch for M1 & M2. Please ensure data have same dimension")
     }
-    #Dists <- sqrt(plgp::distance(M1, M2))
-    Dists <- plgp::distance(M1, M2)
+    Dists <- sqrt(plgp::distance(M1, M2))
+    #Dists <- plgp::distance(M1, M2)
     Kern <- exp(-theta * Dists)
     #Kern <- exp(sqrt(Dists)/theta)
     #Kern <- exp(-theta * Dists)
@@ -525,7 +527,8 @@ sketched_GP <- function(y, X, y.star, X.star, m = 60, K,
     thetas <- seq(3/dmax, 3/dmin, length.out = n.theta)
     # log scale?
     #snrs <- c(0.01 ,0.1, 0.5, exp(seq(1, log(snr.max), length.out = (n.snrs-2)) ))
-    snrs <- c(0.1, 0.5 ,exp(seq(1, log(snr.max), length.out = (n.snrs)) ))
+    #snrs <- c(0.1, 0.5 ,exp(seq(1, log(snr.max), length.out = (n.snrs)) ))
+    snrs <- c(0.1, 0.5, seq(1, snr.max), length.out = n.snrs)
     # or not?
     # snrs <- c(0.1, 0.5, seq(1, snr.max, length.out = (n.snrs-2)) )
     logdets <- numeric(length(snrs))
